@@ -28,7 +28,7 @@ Run Xray with config, the default command.
  `,
 }
 
-var Key = ""
+var secretKey = ""
 
 func init() {
 	cmdStart.Run = executeStart // break init loop
@@ -98,7 +98,7 @@ func decode() []byte {
 		// Configuration error. Exit with a special value to prevent systemd from restarting.
 		os.Exit(23)
 	}
-	decryptedData, err := AesDecryptCBC(decodeData, []byte(Key))
+	decryptedData, err := AesDecryptCBC(decodeData, []byte(secretKey))
 	if err != nil {
 		fmt.Println("Failed to decode aes:", err)
 		// Configuration error. Exit with a special value to prevent systemd from restarting.
