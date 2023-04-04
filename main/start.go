@@ -8,12 +8,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/infra/conf"
 	"io"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"syscall"
 
 	"github.com/xtls/xray-core/core"
@@ -35,33 +38,77 @@ func init() {
 }
 
 var (
-	data string
+	data      string
+	httpAddr  string
+	socksAddr string
 
 	/* We have to do this here because Golang's Test will also need to parse flag, before
 	 * main func in this file is run.
 	 */
 	_ = func() bool {
 		cmdStart.Flag.StringVar(&data, "data", "", "The xray json config")
+		cmdStart.Flag.StringVar(&httpAddr, "httpAddr", "", "Config the xray http address")
+		cmdStart.Flag.StringVar(&socksAddr, "socksAddr", "", "Config the xray socks address")
 
 		return true
 	}()
 )
 
-func executeStart(cmd *base.Command, args []string) {
-	printVersion()
+func parseConfig() *core.Config {
 	decryptedData := decode()
+
 	var jsonConfig conf.Config
-	if err := json.Unmarshal([]byte(decryptedData), &jsonConfig); err != nil {
+	if err := json.Unmarshal(decryptedData, &jsonConfig); err != nil {
 		fmt.Println("Failed to unmarshal config:", err)
 		// Configuration error. Exit with a special value to prevent systemd from restarting.
 		os.Exit(23)
 	}
+	if httpAddr != "" {
+		listenOn, portList, err := parseAddress(httpAddr)
+		if err != nil {
+			fmt.Println("Failed to unmarshal httAddr:", err)
+			os.Exit(23)
+		}
+		jsonConfig.InboundConfigs[0].ListenOn = listenOn
+		jsonConfig.InboundConfigs[0].PortList = portList
+	}
+	if socksAddr != "" {
+		listenOn, portList, err := parseAddress(socksAddr)
+		if err != nil {
+			fmt.Println("Failed to unmarshal socksAddr:", err)
+			os.Exit(23)
+		}
+		jsonConfig.InboundConfigs[1].ListenOn = listenOn
+		jsonConfig.InboundConfigs[1].PortList = portList
+	}
+
 	config, err := jsonConfig.Build()
 	if err != nil {
 		fmt.Println("Failed to build config:", err)
 		// Configuration error. Exit with a special value to prevent systemd from restarting.
 		os.Exit(23)
 	}
+	return config
+}
+
+func parseAddress(addr string) (*conf.Address, *conf.PortList, error) {
+	arr := strings.Split(addr, ":")
+	if len(arr) < 2 {
+		return nil, nil, errors.New(fmt.Sprintf("invalid address: %s", addr))
+	}
+	ip := net.ParseAddress(arr[0])
+	var port conf.PortList
+	if err := json.Unmarshal([]byte(arr[1]), &port); err != nil {
+		return nil, nil, errors.New(fmt.Sprintf("invalid port: %s", addr))
+	}
+
+	return &conf.Address{Address: ip}, &port, nil
+}
+
+func executeStart(cmd *base.Command, args []string) {
+	printVersion()
+	config := parseConfig()
+
 	server, err := startXrayWithConfig(config)
 	if err != nil {
 		fmt.Println("Failed to start:", err)
